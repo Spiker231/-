@@ -1,24 +1,227 @@
-# Compiled class file
-*.class
+package com.example.demo;
 
-# Log file
-*.log
+import javafx.application.Application;
+import javafx.beans.property.SimpleIntegerProperty;
+import javafx.beans.property.SimpleListProperty;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
+import javax.sound.sampled.*;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
-# BlueJ files
-*.ctxt
+public class AudiobookEditorApp extends Application {
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
+    private TableView<Audiobook> audiobookTable;
+    private ObservableList<Audiobook> audiobooks;
+    private TextField audiobookTitleField;
+    private TextField audiobookAuthorField;
+    private TextField audiobookRatingField;
+    private ListView<String> audioTracksListView;
+    private ObservableList<String> audioTracks;
 
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
+    private AudioFormat audioFormat;
+    private TargetDataLine targetDataLine;
+    private ByteArrayOutputStream byteArrayOutputStream;
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+    public void start(Stage primaryStage) {
+        BorderPane root = new BorderPane();
+
+        // Создание таблицы аудиокниг
+        audiobooks = FXCollections.observableArrayList();
+        audiobookTable = new TableView<>(audiobooks);
+
+        TableColumn<Audiobook, String> titleColumn = new TableColumn<>("Название");
+        titleColumn.setCellValueFactory(new PropertyValueFactory<>("title"));
+
+        TableColumn<Audiobook, String> authorColumn = new TableColumn<>("Автор");
+        authorColumn.setCellValueFactory(new PropertyValueFactory<>("author"));
+
+        TableColumn<Audiobook, Integer> ratingColumn = new TableColumn<>("Рейтинг");
+        ratingColumn.setCellValueFactory(new PropertyValueFactory<>("rating"));
+
+        audiobookTable.getColumns().addAll(titleColumn, authorColumn, ratingColumn);
+        root.setCenter(audiobookTable);
+
+        // Создание полей ввода названия, автора и рейтинга аудиокниги
+        audiobookTitleField = new TextField();
+        audiobookAuthorField = new TextField();
+        audiobookRatingField = new TextField();
+
+        // Создание кнопок для добавления и удаления аудиокниг
+        Button addAudiobookButton = new Button("Добавить");
+        Button removeAudiobookButton = new Button("Удалить");
+
+        // Обработчики событий для кнопок
+        addAudiobookButton.setOnAction(e -> addAudiobook());
+        removeAudiobookButton.setOnAction(e -> removeAudiobook());
+
+        // Создание панели с полями ввода и кнопками
+        HBox inputPanel = new HBox(audiobookTitleField, audiobookAuthorField, audiobookRatingField, addAudiobookButton, removeAudiobookButton);
+        root.setBottom(inputPanel);
+
+        // Создание списка аудиодорожек
+        audioTracks = FXCollections.observableArrayList();
+        audioTracksListView = new ListView<>(audioTracks);
+
+        // Создание кнопок для добавления и удаления аудиодорожек
+        Button addAudioTrackButton = new Button("Добавить аудиодорожку");
+        Button removeAudioTrackButton = new Button("Удалить аудиодорожку");
+
+        // Обработчики событий для кнопок
+        addAudioTrackButton.setOnAction(e -> addAudioTrack());
+        removeAudioTrackButton.setOnAction(e -> removeAudioTrack());
+
+        VBox audioTrackPanel = new VBox(addAudioTrackButton, removeAudioTrackButton, audioTracksListView);
+        root.setRight(audioTrackPanel);
+
+        Scene scene = new Scene(root, 600, 400);
+        primaryStage.setScene(scene);
+        primaryStage.setTitle("Редактор аудиокниг");
+        primaryStage.show();
+    }
+
+    private void addAudiobook() {
+        String audiobookTitle = audiobookTitleField.getText();
+        String audiobookAuthor = audiobookAuthorField.getText();
+        int audiobookRating = 0; // Значение по умолчанию
+
+        try {
+            audiobookRating = Integer.parseInt(audiobookRatingField.getText());
+        } catch (NumberFormatException e) {
+            e.printStackTrace();
+        }
+
+        if (!audiobookTitle.isEmpty() && !audiobookAuthor.isEmpty()) {
+            Audiobook audiobook = new Audiobook(audiobookTitle, audiobookAuthor, audiobookRating, new ArrayList<>(audioTracks));
+            audiobooks.add(audiobook);
+            audiobookTitleField.clear();
+            audiobookAuthorField.clear();
+            audiobookRatingField.clear();
+            audioTracks.clear();
+        }
+    }
+
+    private void removeAudiobook() {
+        int selectedIndex = audiobookTable.getSelectionModel().getSelectedIndex();
+        if (selectedIndex >= 0) {
+            audiobooks.remove(selectedIndex);
+        }
+    }
+
+    private void addAudioTrack() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("Добавить аудиодорожку");
+        dialog.setHeaderText(null);
+        dialog.setContentText("Введите название аудиодорожки:");
+
+        dialog.showAndWait().ifPresent(audioTrack -> {
+            if (!audioTrack.isEmpty()) {
+                audioTracks.add(audioTrack);
+                startRecording();
+            }
+        });
+    }
+
+    private void removeAudioTrack() {
+        int selectedIndex = audioTracksListView.getSelectionModel().getSelectedIndex();
+        if (selectedIndex >= 0) {
+            audioTracks.remove(selectedIndex);
+            stopRecording();
+        }
+    }
+
+    private void startRecording() {
+        audioFormat = new AudioFormat(44100, 16, 1, true, false);
+
+        try {
+            DataLine.Info dataLineInfo = new DataLine.Info(TargetDataLine.class, audioFormat);
+            targetDataLine = (TargetDataLine) AudioSystem.getLine(dataLineInfo);
+            targetDataLine.open(audioFormat);
+            targetDataLine.start();
+
+            byteArrayOutputStream = new ByteArrayOutputStream();
+
+            Thread thread = new Thread(() -> {
+                byte[] buffer = new byte[4096];
+                int numBytesRead;
+
+                while (audioTracks.contains("Запись")) {
+                    numBytesRead = targetDataLine.read(buffer, 0, buffer.length);
+
+                    if (numBytesRead > 0) {
+                        byteArrayOutputStream.write(buffer, 0, numBytesRead);
+                    }
+                }
+            });
+
+            thread.start();
+        } catch (LineUnavailableException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void stopRecording() {
+        audioTracks.remove("Запись");
+
+        if (byteArrayOutputStream != null) {
+            try {
+                targetDataLine.stop();
+                targetDataLine.close();
+
+                byteArrayOutputStream.flush();
+                byteArrayOutputStream.close();
+
+                byte[] recordedBytes = byteArrayOutputStream.toByteArray();
+
+                // Делайте что-то с записанным аудио (например, сохраните в файл или обработайте его)
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+
+    public static class Audiobook {
+        private final SimpleStringProperty title;
+        private final SimpleStringProperty author;
+        private final SimpleIntegerProperty rating;
+        private final SimpleListProperty<String> audioTracks;
+
+        public Audiobook(String title, String author, int rating, List<String> audioTracks) {
+            this.title = new SimpleStringProperty(title);
+            this.author = new SimpleStringProperty(author);
+            this.rating = new SimpleIntegerProperty(rating);
+            this.audioTracks = new SimpleListProperty<>(FXCollections.observableArrayList(audioTracks));
+        }
+
+        public String getTitle() {
+            return title.get();
+        }
+
+        public String getAuthor() {
+            return author.get();
+        }
+
+        public int getRating() {
+            return rating.get();
+        }
+
+        public ObservableList<String> getAudioTracks() {
+            return audioTracks.get();
+        }
+    }
+}
